@@ -1,0 +1,32 @@
+name: Tandem APK Fetch & Deploy
+on:
+  workflow_dispatch:
+    inputs:
+      drive_id:
+        description: 'Drive ID'
+        required: true
+      user_email:
+        description: 'Email'
+        required: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pip install gdown
+      - run: |
+          python3 -m gdown "${{ github.event.inputs.drive_id }}" -O tandem.apk
+          if [ $(stat -c%s "tandem.apk") -lt 100000 ]; then exit 1; fi
+      - env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+        run: aws s3 cp tandem.apk s3://${{ secrets.S3_BUCKET }}/aaps/tandam/tandam.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
+      - uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "✅ עדכון טנדם הצליח"
+          body: "שלום, קובץ הטנדם עודכן בשרתים."
+          to: ${{ github.event.inputs.user_email }}
+          from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
