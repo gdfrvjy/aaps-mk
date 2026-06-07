@@ -204,12 +204,16 @@ jobs:
             --endpoint-url https://eu2.contabostorage.com --acl public-read \
             --content-type application/json
       - uses: dawidd6/action-send-mail@v3
+        continue-on-error: true
         with:
           server_address: smtp.gmail.com
           server_port: 465
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: "✅ AAPS-MK Build: ${{ needs.check-version.outputs.upstream_tag }}"
-          body: "AAPS-MK עודכן: ${{ env.S3_APK_URL }}"
+          body: |
+            ✅ AAPS-MK עודכן בהצלחה!
+            גירסה: ${{ needs.check-version.outputs.upstream_tag }}
+            הורדה: ${{ env.S3_APK_URL }}
           to: "8461950@gmail.com"
           from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
