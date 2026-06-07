@@ -1,0 +1,96 @@
+name: xDrip Fetch & Deploy
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 1 * * *'
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest xDrip release
+        id: get_tag
+        run: |
+          D=$(curl -s "https://api.github.com/repos/NightscoutFoundation/xDrip/releases")
+          echo "tag=$(echo "$D" | jq -r '.[0].tag_name')" >> $GITHUB_OUTPUT
+          echo "url=$(echo "$D" | jq -r '.[0].assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)" >> $GITHUB_OUTPUT
+
+      - name: Check if already up to date
+        id: check
+        run: |
+          C=$(curl -s "https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA/XDRIP.json")
+          if [[ "$C" == *"${{ steps.get_tag.outputs.tag }}"* ]] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download & upload to S3
+        if: steps.check.outputs.skip == 'false'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+        run: |
+          curl -L -o xDrip.apk "${{ steps.get_tag.outputs.url }}"
+          aws s3 cp xDrip.apk s3://${{ secrets.S3_BUCKET }}/aaps/xDrip-plus.apk \
+            --endpoint-url https://eu2.contabostorage.com --acl public-read
+
+      - name: Update Firebase download link
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          curl -X PATCH \
+            "https://dinamik-92401-default-rtdb.firebaseio.com/firebhse_list/allapps/xDrip%20-%20%D7%92%D7%99%D7%A8%D7%A1%D7%AA%20%D7%91%D7%98%D7%90%20%D7%90%D7%97%D7%A8%D7%95%D7%A0%D7%94%20(%D7%9E%D7%AA%D7%A2%D7%93%D7%9B%D7%9F%20%D7%90%D7%95%D7%98%D7%95%D7%9E%D7%98%D7%99%D7%AA%20%D7%9B%D7%9C%20%D7%9B%D7%9E%D7%94%20%D7%99%D7%9E%D7%99%D7%9D%20-%20%D7%90%D7%99%D7%9F%20%D7%98%D7%A2%D7%9D%20%D7%9C%D7%A2%D7%93%D7%9B%D7%9F%20%D7%A1%D7%AA%D7%9D%20%D7%A8%D7%A7%20%D7%90%D7%9D%20%D7%99%D7%A9%20%D7%A6%D7%95%D7%A8%D7%9A).json" \
+            -H "Content-Type: application/json" \
+            -d "{\"קישור הורדה\": \"https://object.mk-devices.ovh/aaps/xDrip-plus.apk\"}"
+
+      - name: Update Firebase XDRIP tag
+        if: steps.check.outputs.skip == 'false'
+        env:
+          TAG: ${{ steps.get_tag.outputs.tag }}
+        run: |
+          python3 << 'PYEOF'
+          import requests, os
+
+          TAG = os.environ['TAG']
+          URL = "https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA/XDRIP.json"
+
+          stored = requests.get(URL).json() or ""
+          clean = stored
+          if isinstance(clean, str) and clean.startswith('"') and clean.endswith('"') and len(clean) > 1:
+              clean = clean[1:-1]
+
+          lines = clean.split("\\n") if "\\n" in clean else (clean.splitlines() or [""])
+          lines[0] = f"גירסה זמינה: {TAG} (מתעדכן אוטומטית כשיש עדכון חדש)"
+          new_value = '"' + "\\n".join(lines) + '"'
+          requests.put(URL, json=new_value)
+          PYEOF
+
+      - name: Update S3 version.json
+        if: steps.check.outputs.skip == 'false'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+        run: |
+          aws s3 cp s3://${{ secrets.S3_BUCKET }}/aaps/version.json /tmp/version.json \
+            --endpoint-url https://eu2.contabostorage.com 2>/dev/null || echo '{}' > /tmp/version.json
+          jq --arg v "${{ steps.get_tag.outputs.tag }}" \
+             --arg u "https://object.mk-devices.ovh/aaps/xDrip-plus.apk" \
+             --arg d "$(date +'%d/%m/%Y')" \
+             '.xdrip = {"name": "xDrip+", "version": $v, "url": $u, "updated": $d}' \
+             /tmp/version.json > /tmp/version_new.json
+          aws s3 cp /tmp/version_new.json s3://${{ secrets.S3_BUCKET }}/aaps/version.json \
+            --endpoint-url https://eu2.contabostorage.com --acl public-read \
+            --content-type application/json
+
+      - name: Send email notification
+        if: steps.check.outputs.skip == 'false'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "✅ xDrip Updated"
+          body: "xDrip עודכן ב-S3 ובפיירבייס לגרסה ${{ steps.get_tag.outputs.tag }}."
+          to: "8461950@gmail.com"
+          from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
