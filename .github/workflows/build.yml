@@ -137,6 +137,7 @@ jobs:
           git add -A
           git diff --cached --stat
           git commit -m "MK patches: any-browser, minSdk=30, auto-export, master-password" || echo "Nothing to commit"
+          git tag -f "${{ needs.check-version.outputs.upstream_tag }}"
 
       - uses: actions/setup-java@v4
         with:
