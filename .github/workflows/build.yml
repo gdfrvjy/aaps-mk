@@ -1,0 +1,200 @@
+name: AAPS Build & Deploy Pro
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FIREBASE_LOOP_DOC_URL: https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA.json
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      upstream_tag: ${{ steps.get_tag.outputs.upstream_tag }}
+    steps:
+      - id: get_tag
+        run: echo "upstream_tag=$(curl -s https://api.github.com/repos/nightscout/AndroidAPS/releases/latest | jq -r .tag_name)" >> $GITHUB_OUTPUT
+      - id: check
+        run: |
+          TAG="${{ steps.get_tag.outputs.upstream_tag }}"
+          STORED=$(curl -s "$FIREBASE_LOOP_DOC_URL" | jq -r '.["לופ"] // ""')
+          if [[ "$STORED" == *"$TAG"* ]] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          git remote add upstream https://github.com/nightscout/AndroidAPS.git || true
+          git fetch upstream --tags
+          git checkout ${{ needs.check-version.outputs.upstream_tag }}
+
+      - name: Apply MK patches
+        run: |
+          python3 - << 'PYEOF'
+          import re, sys
+
+          def patch(path, description, fn):
+              try:
+                  with open(path, 'r', encoding='utf-8') as f:
+                      content = f.read()
+                  new_content = fn(content)
+                  if new_content == content:
+                      print(f"  [SKIP] {description}")
+                  else:
+                      with open(path, 'w', encoding='utf-8') as f:
+                          f.write(new_content)
+                      print(f"  [OK]   {description}")
+              except FileNotFoundError:
+                  print(f"  [ERR]  file not found: {path}", file=sys.stderr)
+
+          print("=== Applying MK patches ===")
+
+          # 1. Any-browser auth (TidePool)
+          def patch_authflow(c):
+              c = c.replace(
+                  'import net.openid.appauth.browser.BrowserAllowList',
+                  'import net.openid.appauth.browser.AnyBrowserMatcher'
+              )
+              c = c.replace('import net.openid.appauth.browser.VersionedBrowserMatcher\n', '')
+              c = re.sub(
+                  r'\.setBrowserMatcher\(\s*BrowserAllowList\([^)]+\)\s*\)',
+                  '.setBrowserMatcher(AnyBrowserMatcher.INSTANCE)',
+                  c, flags=re.DOTALL
+              )
+              return c
+          patch(
+              'plugins/sync/src/main/kotlin/app/aaps/plugins/sync/tidepool/auth/AuthFlowOut.kt',
+              'Any-browser auth (TidePool)',
+              patch_authflow
+          )
+
+          # 2. Android 11 support
+          patch(
+              'buildSrc/src/main/kotlin/Versions.kt',
+              'Android 11 support (minSdk=30)',
+              lambda c: c.replace('const val minSdk = 31', 'const val minSdk = 30')
+          )
+
+          # 3. Auto-export enabled by default
+          patch(
+              'core/keys/src/main/kotlin/app/aaps/core/keys/BooleanKey.kt',
+              'Auto-export enabled by default',
+              lambda c: c.replace(
+                  'MaintenanceEnableExportSettingsAutomation("enable_unattended_export", false',
+                  'MaintenanceEnableExportSettingsAutomation("enable_unattended_export", true'
+              )
+          )
+
+          # 4. Master password default = "1"
+          patch(
+              'core/keys/src/main/kotlin/app/aaps/core/keys/StringKey.kt',
+              'Master password default = "1"',
+              lambda c: c.replace(
+                  'ProtectionMasterPassword("master_password", "", isPassword = true)',
+                  'ProtectionMasterPassword("master_password", "1", isPassword = true)'
+              )
+          )
+
+          # 5. Fallback export password to master password
+          def patch_datastore(c):
+              old = (
+                  '        return Triple("", true, true)\n'
+                  '    }\n'
+                  '\n'
+                  '    /*************************************************************************'
+              )
+              new = (
+                  '        // MK: use master password as fallback for auto-export\n'
+                  '        val master = preferences.get(app.aaps.core.keys.StringKey.ProtectionMasterPassword)\n'
+                  '        if (master.isNotEmpty()) return Triple(master, false, false)\n'
+                  '        return Triple("", true, true)\n'
+                  '    }\n'
+                  '\n'
+                  '    /*************************************************************************'
+              )
+              return c.replace(old, new, 1)
+          patch(
+              'implementation/src/main/kotlin/app/aaps/implementation/protection/ExportPasswordDataStoreImpl.kt',
+              'Fallback export password from master password',
+              patch_datastore
+          )
+
+          print("=== Done ===")
+          PYEOF
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - run: ./gradlew :app:assembleFullRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-apk
+          path: app/build/outputs/apk/full/release/*unsigned.apk
+
+  sign-and-deploy:
+    needs: [check-version, build]
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-apk
+      - name: Sign
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.jks
+          UNSIGNED=$(find . -name "*unsigned.apk" | head -n 1)
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
+          $BT/zipalign -v 4 "$UNSIGNED" aligned.apk
+          $BT/apksigner sign --ks release.jks --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} --ks-key-alias ${{ secrets.KEY_ALIAS }} --key-pass pass:${{ secrets.KEY_PASSWORD }} --out signed.apk aligned.apk
+      - name: Upload APK to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+        run: aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/aaps/AAPS.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
+      - name: Update Firebase
+        env:
+          VER: ${{ needs.check-version.outputs.upstream_tag }}
+        run: |
+          L1="גירסה זמינה: $VER (עודכן ב: $(date +'%d/%m/%Y'))"
+          W1="⚠️ מחייב אנדרואיד 11 ומעלה"
+          W2="⚠️ כל שימוש בתכונות אלו על אחריות המשתמש בלבד. הודעה חשובה❗"
+          W3="⚠️ משתמשי טיידפול — לפני עדכון הגירסה (אפשר גם אחרי אך תצטרכו לכבות את האינטרנט בזמן הפעולה) יש לפתוח את האפליקציה, בתפריט בצד ימין לבחור בונה התצורה, לגלול למטה תחת הכותרת סינכרון ולבטל את סימון הV בצד ימין של טיידפול - Tidepool."
+          TEXT="\"${L1}\\n${W1}\\n${W2}\\n${W3}\""
+          jq -n --arg v "$TEXT" '{"לופ": $v}' > p.json
+          curl -X PATCH "$FIREBASE_LOOP_DOC_URL" -d @p.json
+      - name: Update S3 version.json
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
+          VER: ${{ needs.check-version.outputs.upstream_tag }}
+        run: |
+          aws s3 cp s3://${{ secrets.S3_BUCKET }}/aaps/version.json /tmp/version.json \
+            --endpoint-url https://eu2.contabostorage.com 2>/dev/null || echo '{}' > /tmp/version.json
+          jq --arg v "$VER" \
+             --arg u "https://object.mk-devices.ovh/aaps/AAPS.apk" \
+             --arg d "$(date +'%d/%m/%Y')" \
+             '.aaps = {"name": "AndroidAPS", "version": $v, "url": $u, "updated": $d}' \
+             /tmp/version.json > /tmp/version_new.json
+          aws s3 cp /tmp/version_new.json s3://${{ secrets.S3_BUCKET }}/aaps/version.json \
+            --endpoint-url https://eu2.contabostorage.com --acl public-read \
+            --content-type application/json
+      - uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "✅ AAPS Build Successful"
+          body: "AndroidAPS עודכן בהצלחה ב-S3 ובפיירבייס."
+          to: "8461950@gmail.com"
+          from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
