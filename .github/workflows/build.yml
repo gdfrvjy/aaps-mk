@@ -1,11 +1,15 @@
-name: AAPS Build & Deploy Pro
+name: AAPS-MK Build & Deploy
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 1 * * *'
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   FIREBASE_LOOP_DOC_URL: https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA.json
+  S3_PATH: loop-phone/app/aaps-mk.apk
+  S3_APK_URL: https://object.mk-devices.ovh/loop-phone/app/aaps-mk.apk
+  FIREBASE_KEY: "aaps-mk"
+  VERSION_JSON_KEY: "aaps-mk"
 jobs:
   check-version:
     runs-on: ubuntu-latest
@@ -18,7 +22,7 @@ jobs:
       - id: check
         run: |
           TAG="${{ steps.get_tag.outputs.upstream_tag }}"
-          STORED=$(curl -s "$FIREBASE_LOOP_DOC_URL" | jq -r '.["לופ"] // ""')
+          STORED=$(curl -s "$FIREBASE_LOOP_DOC_URL" | jq -r '.["'"$FIREBASE_KEY"'"] // ""')
           if [[ "$STORED" == *"$TAG"* ]] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             echo "should_build=false" >> $GITHUB_OUTPUT
           else
@@ -58,7 +62,6 @@ jobs:
 
           print("=== Applying MK patches ===")
 
-          # 1. Any-browser auth (TidePool)
           def patch_authflow(c):
               c = c.replace(
                   'import net.openid.appauth.browser.BrowserAllowList',
@@ -77,14 +80,12 @@ jobs:
               patch_authflow
           )
 
-          # 2. Android 11 support
           patch(
               'buildSrc/src/main/kotlin/Versions.kt',
               'Android 11 support (minSdk=30)',
               lambda c: c.replace('const val minSdk = 31', 'const val minSdk = 30')
           )
 
-          # 3. Auto-export enabled by default
           patch(
               'core/keys/src/main/kotlin/app/aaps/core/keys/BooleanKey.kt',
               'Auto-export enabled by default',
@@ -94,7 +95,6 @@ jobs:
               )
           )
 
-          # 4. Master password default = "1"
           patch(
               'core/keys/src/main/kotlin/app/aaps/core/keys/StringKey.kt',
               'Master password default = "1"',
@@ -104,7 +104,6 @@ jobs:
               )
           )
 
-          # 5. Fallback export password to master password
           def patch_datastore(c):
               old = (
                   '        return Triple("", true, true)\n'
@@ -155,22 +154,29 @@ jobs:
           UNSIGNED=$(find . -name "*unsigned.apk" | head -n 1)
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
           $BT/zipalign -v 4 "$UNSIGNED" aligned.apk
-          $BT/apksigner sign --ks release.jks --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} --ks-key-alias ${{ secrets.KEY_ALIAS }} --key-pass pass:${{ secrets.KEY_PASSWORD }} --out signed.apk aligned.apk
+          $BT/apksigner sign \
+            --ks release.jks \
+            --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
+            --ks-key-alias ${{ secrets.KEY_ALIAS }} \
+            --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+            --out signed.apk aligned.apk
       - name: Upload APK to S3
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
-        run: aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/aaps/AAPS.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
+        run: |
+          aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/${{ env.S3_PATH }} \
+            --endpoint-url https://eu2.contabostorage.com --acl public-read
       - name: Update Firebase
         env:
           VER: ${{ needs.check-version.outputs.upstream_tag }}
         run: |
           L1="גירסה זמינה: $VER (עודכן ב: $(date +'%d/%m/%Y'))"
-          W1="⚠️ מחייב אנדרואיד 11 ומעלה"
-          W2="⚠️ כל שימוש בתכונות אלו על אחריות המשתמש בלבד. הודעה חשובה❗"
-          W3="⚠️ משתמשי טיידפול — לפני עדכון הגירסה (אפשר גם אחרי אך תצטרכו לכבות את האינטרנט בזמן הפעולה) יש לפתוח את האפליקציה, בתפריט בצד ימין לבחור בונה התצורה, לגלול למטה תחת הכותרת סינכרון ולבטל את סימון הV בצד ימין של טיידפול - Tidepool."
-          TEXT="\"${L1}\\n${W1}\\n${W2}\\n${W3}\""
-          jq -n --arg v "$TEXT" '{"לופ": $v}' > p.json
+          W1="✅ תומך אנדרואיד 11 ומעלה | כל דפדפן"
+          W2="✅ גיבוי אוטומטי מופעל | סיסמה: 1"
+          W3="⚠️ כל שימוש בתכונות אלו על אחריות המשתמש בלבד."
+          TEXT="${L1}\n${W1}\n${W2}\n${W3}"
+          jq -n --arg k "${{ env.FIREBASE_KEY }}" --arg v "$TEXT" '{($k): $v}' > p.json
           curl -X PATCH "$FIREBASE_LOOP_DOC_URL" -d @p.json
       - name: Update S3 version.json
         env:
@@ -180,10 +186,11 @@ jobs:
         run: |
           aws s3 cp s3://${{ secrets.S3_BUCKET }}/aaps/version.json /tmp/version.json \
             --endpoint-url https://eu2.contabostorage.com 2>/dev/null || echo '{}' > /tmp/version.json
-          jq --arg v "$VER" \
-             --arg u "https://object.mk-devices.ovh/aaps/AAPS.apk" \
+          jq --arg k "${{ env.VERSION_JSON_KEY }}" \
+             --arg v "$VER" \
+             --arg u "${{ env.S3_APK_URL }}" \
              --arg d "$(date +'%d/%m/%Y')" \
-             '.aaps = {"name": "AndroidAPS", "version": $v, "url": $u, "updated": $d}' \
+             '.[$k] = {"name": "AndroidAPS-MK", "version": $v, "url": $u, "updated": $d}' \
              /tmp/version.json > /tmp/version_new.json
           aws s3 cp /tmp/version_new.json s3://${{ secrets.S3_BUCKET }}/aaps/version.json \
             --endpoint-url https://eu2.contabostorage.com --acl public-read \
@@ -194,7 +201,7 @@ jobs:
           server_port: 465
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "✅ AAPS Build Successful"
-          body: "AndroidAPS עודכן בהצלחה ב-S3 ובפיירבייס."
+          subject: "✅ AAPS-MK Build: ${{ needs.check-version.outputs.upstream_tag }}"
+          body: "AAPS-MK עודכן: ${{ env.S3_APK_URL }}"
           to: "8461950@gmail.com"
           from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
