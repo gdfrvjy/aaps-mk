@@ -175,6 +175,8 @@ jobs:
         run: |
           aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/${{ env.S3_PATH }} \
             --endpoint-url https://eu2.contabostorage.com --acl public-read
+          aws s3 cp signed.apk s3://${{ secrets.S3_BUCKET }}/aaps/AAPS-MK.apk \
+            --endpoint-url https://eu2.contabostorage.com --acl public-read
       - name: Update Firebase
         env:
           VER: ${{ needs.check-version.outputs.upstream_tag }}
