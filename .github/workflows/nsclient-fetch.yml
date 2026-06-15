@@ -56,6 +56,12 @@ jobs:
           aws s3 cp /tmp/version_new.json s3://${{ secrets.S3_BUCKET }}/aaps/version.json \
             --endpoint-url https://eu2.contabostorage.com --acl public-read \
             --content-type application/json
+      - name: Update Loop Phone app catalog version
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          curl -s -X POST "https://loop.mk-devices.ovh/fn/setAppVersion" \
+            -H "Content-Type: application/json" \
+            -d "{\"secret\":\"mk-deploy-2026\",\"pkg\":\"info.nightscout.aapsclient\",\"version\":\"${{ steps.get_tag.outputs.tag }}\"}"
       - if: steps.check.outputs.skip == 'false'
         uses: dawidd6/action-send-mail@v3
         with:
