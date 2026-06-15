@@ -13,6 +13,7 @@ jobs:
         run: |
           D=$(curl -s "https://api.github.com/repos/NightscoutFoundation/xDrip/releases")
           echo "tag=$(echo "$D" | jq -r '.[0].tag_name')" >> $GITHUB_OUTPUT
+          echo "release_name=$(echo "$D" | jq -r '.[0].name')" >> $GITHUB_OUTPUT
           echo "url=$(echo "$D" | jq -r '.[0].assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)" >> $GITHUB_OUTPUT
 
       - name: Check if already up to date
@@ -47,11 +48,13 @@ jobs:
         if: steps.check.outputs.skip == 'false'
         env:
           TAG: ${{ steps.get_tag.outputs.tag }}
+          RELEASE_NAME: ${{ steps.get_tag.outputs.release_name }}
         run: |
           python3 << 'PYEOF'
           import requests, os
 
           TAG = os.environ['TAG']
+          RELEASE_NAME = os.environ['RELEASE_NAME']
           URL = "https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA/XDRIP.json"
 
           stored = requests.get(URL).json() or ""
@@ -60,10 +63,28 @@ jobs:
               clean = clean[1:-1]
 
           lines = clean.split("\\n") if "\\n" in clean else (clean.splitlines() or [""])
-          lines[0] = f"גירסה זמינה: {TAG} (מתעדכן אוטומטית כשיש עדכון חדש)"
+          display = RELEASE_NAME if RELEASE_NAME else TAG
+          lines[0] = f"גירסה זמינה: {display} (מתעדכן אוטומטית כשיש עדכון חדש)"
           new_value = '"' + "\\n".join(lines) + '"'
           requests.put(URL, json=new_value)
           PYEOF
+
+      - name: Update Firebase xdrip config
+        if: steps.check.outputs.skip == 'false'
+        env:
+          TAG: ${{ steps.get_tag.outputs.tag }}
+          RELEASE_NAME: ${{ steps.get_tag.outputs.release_name }}
+        run: |
+          DISPLAY="${{ steps.get_tag.outputs.release_name }}"
+          [ -z "$DISPLAY" ] && DISPLAY="${{ steps.get_tag.outputs.tag }}"
+          jq -n \
+            --arg v "${{ steps.get_tag.outputs.tag }}" \
+            --arg n "$DISPLAY" \
+            '{"version": $v, "version_name": $n}' | \
+          curl -X PUT \
+            "https://suceret-32936-default-rtdb.firebaseio.com/xdrip.json" \
+            -H "Content-Type: application/json" \
+            --data-binary @-
 
       - name: Update S3 version.json
         if: steps.check.outputs.skip == 'false'
@@ -73,10 +94,13 @@ jobs:
         run: |
           aws s3 cp s3://${{ secrets.S3_BUCKET }}/aaps/version.json /tmp/version.json \
             --endpoint-url https://eu2.contabostorage.com 2>/dev/null || echo '{}' > /tmp/version.json
+          RELEASE_NAME="${{ steps.get_tag.outputs.release_name }}"
+          [ -z "$RELEASE_NAME" ] && RELEASE_NAME="${{ steps.get_tag.outputs.tag }}"
           jq --arg v "${{ steps.get_tag.outputs.tag }}" \
+             --arg n "$RELEASE_NAME" \
              --arg u "https://object.mk-devices.ovh/aaps/xDrip-plus.apk" \
              --arg d "$(date +'%d/%m/%Y')" \
-             '.xdrip = {"name": "xDrip+", "version": $v, "url": $u, "updated": $d}' \
+             '.xdrip = {"name": "xDrip+", "version": $v, "version_name": $n, "url": $u, "updated": $d}' \
              /tmp/version.json > /tmp/version_new.json
           aws s3 cp /tmp/version_new.json s3://${{ secrets.S3_BUCKET }}/aaps/version.json \
             --endpoint-url https://eu2.contabostorage.com --acl public-read \
@@ -91,6 +115,6 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           subject: "✅ xDrip Updated"
-          body: "xDrip עודכן ב-S3 ובפיירבייס לגרסה ${{ steps.get_tag.outputs.tag }}."
+          body: "xDrip עודכן ב-S3 ובפיירבייס לגרסה ${{ steps.get_tag.outputs.release_name }} (${{ steps.get_tag.outputs.tag }})."
           to: "8461950@gmail.com"
           from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
