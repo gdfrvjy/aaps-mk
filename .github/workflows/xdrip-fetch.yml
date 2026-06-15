@@ -106,6 +106,15 @@ jobs:
             --endpoint-url https://eu2.contabostorage.com --acl public-read \
             --content-type application/json
 
+      - name: Update Loop Phone app catalog version
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          RELEASE_NAME="${{ steps.get_tag.outputs.release_name }}"
+          [ -z "$RELEASE_NAME" ] && RELEASE_NAME="${{ steps.get_tag.outputs.tag }}"
+          curl -s -X POST "https://loop.mk-devices.ovh/fn/setAppVersion" \
+            -H "Content-Type: application/json" \
+            -d "{\"secret\":\"mk-deploy-2026\",\"pkg\":\"com.eveningoutpost.dexdrip\",\"version\":\"${{ steps.get_tag.outputs.tag }}\",\"version_name\":\"$RELEASE_NAME\"}"
+
       - name: Send email notification
         if: steps.check.outputs.skip == 'false'
         uses: dawidd6/action-send-mail@v3
