@@ -189,6 +189,14 @@ jobs:
           TEXT="${L1}\n${W1}\n${W2}\n${W3}"
           jq -n --arg k "${{ env.FIREBASE_KEY }}" --arg v "$TEXT" '{($k): $v}' > p.json
           curl -X PATCH "$FIREBASE_LOOP_DOC_URL" -d @p.json
+      - name: Update Firebase aaps config (Android 11)
+        env:
+          VER: ${{ needs.check-version.outputs.upstream_tag }}
+        run: |
+          curl -X PATCH \
+            "https://suceret-32936-default-rtdb.firebaseio.com/aaps.json" \
+            -H "Content-Type: application/json" \
+            -d "{\"version\": \"$VER\", \"compatibility\": \"Android 11 ומעלה\"}"
       - name: Update S3 version.json
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
