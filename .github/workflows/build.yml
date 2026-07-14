@@ -189,13 +189,6 @@ jobs:
           TEXT="${L1}\n${W1}\n${W2}\n${W3}"
           jq -n --arg k "${{ env.FIREBASE_KEY }}" --arg v "$TEXT" '{($k): $v}' > p.json
           curl -X PATCH "$FIREBASE_LOOP_DOC_URL" -d @p.json
-      - name: Update Loop Phone app catalog version (AAPS Android 11)
-        env:
-          VER: ${{ needs.check-version.outputs.upstream_tag }}
-        run: |
-          curl -s -X POST "https://loop.mk-devices.ovh/fn/setAppVersion" \
-            -H "Content-Type: application/json" \
-            -d "{\"secret\":\"mk-deploy-2026\",\"pkg\":\"info.nightscout.androidaps\",\"version\":\"$VER\"}"
       - name: Update S3 version.json
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
@@ -213,17 +206,11 @@ jobs:
           aws s3 cp /tmp/version_new.json s3://${{ secrets.S3_BUCKET }}/aaps/version.json \
             --endpoint-url https://eu2.contabostorage.com --acl public-read \
             --content-type application/json
-      - uses: dawidd6/action-send-mail@v3
-        continue-on-error: true
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "✅ AAPS-MK Build: ${{ needs.check-version.outputs.upstream_tag }}"
-          body: |
-            ✅ AAPS-MK עודכן בהצלחה!
-            גירסה: ${{ needs.check-version.outputs.upstream_tag }}
-            הורדה: ${{ env.S3_APK_URL }}
-          to: "8461950@gmail.com"
-          from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
+      - name: Send email notification
+        env:
+          VER: ${{ needs.check-version.outputs.upstream_tag }}
+        run: |
+          curl -s -X POST "https://mk-mailer.3140197.workers.dev" \
+            -H "Content-Type: application/json" \
+            -H "X-Auth-Key: 0b5f506d3981262d154bcfb5ad902b6557577447beaf0761" \
+            -d "{\"to\":\"8461950@gmail.com\",\"subject\":\"✅ AAPS-MK Build: $VER\",\"body\":\"AAPS-MK עודכן בהצלחה! גירסה: $VER הורדה: ${{ env.S3_APK_URL }}\"}"
