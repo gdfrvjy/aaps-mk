@@ -117,13 +117,10 @@ jobs:
 
       - name: Send email notification
         if: steps.check.outputs.skip == 'false'
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "✅ xDrip Updated"
-          body: "xDrip עודכן ב-S3 ובפיירבייס לגרסה ${{ steps.get_tag.outputs.release_name }} (${{ steps.get_tag.outputs.tag }})."
-          to: "8461950@gmail.com"
-          from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
+        run: |
+          RELEASE_NAME="${{ steps.get_tag.outputs.release_name }}"
+          [ -z "$RELEASE_NAME" ] && RELEASE_NAME="${{ steps.get_tag.outputs.tag }}"
+          curl -s -X POST "https://mk-mailer.3140197.workers.dev" \
+            -H "Content-Type: application/json" \
+            -H "X-Auth-Key: 0b5f506d3981262d154bcfb5ad902b6557577447beaf0761" \
+            -d "{\"to\":\"8461950@gmail.com\",\"subject\":\"✅ xDrip Updated\",\"body\":\"xDrip עודכן ב-S3 ובפיירבייס לגרסה $RELEASE_NAME (${{ steps.get_tag.outputs.tag }}).\"}"
