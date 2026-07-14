@@ -62,14 +62,10 @@ jobs:
           curl -s -X POST "https://loop.mk-devices.ovh/fn/setAppVersion" \
             -H "Content-Type: application/json" \
             -d "{\"secret\":\"mk-deploy-2026\",\"pkg\":\"info.nightscout.aapsclient\",\"version\":\"${{ steps.get_tag.outputs.tag }}\"}"
-      - if: steps.check.outputs.skip == 'false'
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "✅ NSClient Updated"
-          body: "NSClient עודכן ב-S3 ובפיירבייס לגרסה ${{ steps.get_tag.outputs.tag }}."
-          to: "8461950@gmail.com"
-          from: "AAPS Automation <${{ secrets.MAIL_USERNAME }}>"
+      - name: Send email notification
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          curl -s -X POST "https://mk-mailer.3140197.workers.dev" \
+            -H "Content-Type: application/json" \
+            -H "X-Auth-Key: 0b5f506d3981262d154bcfb5ad902b6557577447beaf0761" \
+            -d "{\"to\":\"8461950@gmail.com\",\"subject\":\"✅ NSClient Updated\",\"body\":\"NSClient עודכן ב-S3 ובפיירבייס לגרסה ${{ steps.get_tag.outputs.tag }}.\"}"
