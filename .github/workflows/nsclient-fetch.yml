@@ -14,6 +14,7 @@ jobs:
         run: |
           D=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/nightscout/AndroidAPS/releases/latest)
           echo "tag=$(echo "$D" | jq -r .tag_name)" >> $GITHUB_OUTPUT
+          echo "release_name=$(echo "$D" | jq -r .name)" >> $GITHUB_OUTPUT
           echo "url=$(echo "$D" | jq -r '.assets[] | select(.name | test("^app-aapsclient-release_.*\\.apk$")) | .browser_download_url' | head -n 1)" >> $GITHUB_OUTPUT
       - id: check
         run: |
@@ -62,9 +63,11 @@ jobs:
       - name: Update Loop Phone app catalog version
         if: steps.check.outputs.skip == 'false'
         run: |
+          RELEASE_NAME="${{ steps.get_tag.outputs.release_name }}"
+          [ -z "$RELEASE_NAME" ] && RELEASE_NAME="${{ steps.get_tag.outputs.tag }}"
           curl -s -X POST "https://loop.mk-devices.ovh/fn/setAppVersion" \
             -H "Content-Type: application/json" \
-            -d "{\"secret\":\"mk-deploy-2026\",\"pkg\":\"info.nightscout.aapsclient\",\"version\":\"${{ steps.get_tag.outputs.tag }}\"}"
+            -d "{\"secret\":\"mk-deploy-2026\",\"pkg\":\"info.nightscout.aapsclient\",\"version\":\"${{ steps.get_tag.outputs.tag }}\",\"version_name\":\"$RELEASE_NAME\",\"link\":\"${{ env.S3_APK_URL }}\"}"
       - name: Send email notification
         if: steps.check.outputs.skip == 'false'
         run: |
