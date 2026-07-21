@@ -6,8 +6,8 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   FIREBASE_LOOP_DOC_URL: https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA.json
-  S3_PATH: loop-phone/app/aaps-mk.apk
-  S3_APK_URL: https://object.mk-devices.ovh/loop-phone/app/aaps-mk.apk
+  S3_PATH: loop_phone/app/aaps-mk.apk
+  S3_APK_URL: https://object.mk-devices.ovh/loop_phone/app/aaps-mk.apk
   FIREBASE_KEY: "aaps-mk"
   VERSION_JSON_KEY: "aaps-mk"
 jobs:

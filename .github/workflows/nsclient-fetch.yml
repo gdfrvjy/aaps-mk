@@ -4,8 +4,8 @@ on:
   schedule:
     - cron: '30 0 * * *'
 env:
-  S3_PATH: loop-phone/app/AAPSclient.apk
-  S3_APK_URL: https://object.mk-devices.ovh/loop-phone/app/AAPSclient.apk
+  S3_PATH: loop_phone/app/AAPSclient.apk
+  S3_APK_URL: https://object.mk-devices.ovh/loop_phone/app/AAPSclient.apk
 jobs:
   fetch:
     runs-on: ubuntu-latest

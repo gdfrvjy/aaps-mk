@@ -4,8 +4,8 @@ on:
   schedule:
     - cron: '0 1 * * *'
 env:
-  S3_PATH: loop-phone/app/xDrip-plus.apk
-  S3_APK_URL: https://object.mk-devices.ovh/loop-phone/app/xDrip-plus.apk
+  S3_PATH: loop_phone/app/xDrip-plus.apk
+  S3_APK_URL: https://object.mk-devices.ovh/loop_phone/app/xDrip-plus.apk
 
 jobs:
   fetch:
