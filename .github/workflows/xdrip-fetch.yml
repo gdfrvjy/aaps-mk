@@ -3,6 +3,9 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 1 * * *'
+env:
+  S3_PATH: loop-phone/app/xDrip-plus.apk
+  S3_APK_URL: https://object.mk-devices.ovh/loop-phone/app/xDrip-plus.apk
 
 jobs:
   fetch:
@@ -33,16 +36,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
         run: |
           curl -L -o xDrip.apk "${{ steps.get_tag.outputs.url }}"
-          aws s3 cp xDrip.apk s3://${{ secrets.S3_BUCKET }}/aaps/xDrip-plus.apk \
+          aws s3 cp xDrip.apk s3://${{ secrets.S3_BUCKET }}/${{ env.S3_PATH }} \
             --endpoint-url https://eu2.contabostorage.com --acl public-read
-
-      - name: Update Firebase download link
-        if: steps.check.outputs.skip == 'false'
-        run: |
-          curl -X PATCH \
-            "https://dinamik-92401-default-rtdb.firebaseio.com/firebhse_list/allapps/xDrip%20-%20%D7%92%D7%99%D7%A8%D7%A1%D7%AA%20%D7%91%D7%98%D7%90%20%D7%90%D7%97%D7%A8%D7%95%D7%A0%D7%94%20(%D7%9E%D7%AA%D7%A2%D7%93%D7%9B%D7%9F%20%D7%90%D7%95%D7%98%D7%95%D7%9E%D7%98%D7%99%D7%AA%20%D7%9B%D7%9C%20%D7%9B%D7%9E%D7%94%20%D7%99%D7%9E%D7%99%D7%9D%20-%20%D7%90%D7%99%D7%9F%20%D7%98%D7%A2%D7%9D%20%D7%9C%D7%A2%D7%93%D7%9B%D7%9F%20%D7%A1%D7%AA%D7%9D%20%D7%A8%D7%A7%20%D7%90%D7%9D%20%D7%99%D7%A9%20%D7%A6%D7%95%D7%A8%D7%9A).json" \
-            -H "Content-Type: application/json" \
-            -d "{\"קישור הורדה\": \"https://object.mk-devices.ovh/aaps/xDrip-plus.apk\"}"
 
       - name: Update Firebase XDRIP tag
         if: steps.check.outputs.skip == 'false'
@@ -98,7 +93,7 @@ jobs:
           [ -z "$RELEASE_NAME" ] && RELEASE_NAME="${{ steps.get_tag.outputs.tag }}"
           jq --arg v "${{ steps.get_tag.outputs.tag }}" \
              --arg n "$RELEASE_NAME" \
-             --arg u "https://object.mk-devices.ovh/aaps/xDrip-plus.apk" \
+             --arg u "${{ env.S3_APK_URL }}" \
              --arg d "$(date +'%d/%m/%Y')" \
              '.xdrip = {"name": "xDrip+", "version": $v, "version_name": $n, "url": $u, "updated": $d}' \
              /tmp/version.json > /tmp/version_new.json

@@ -3,6 +3,9 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '30 0 * * *'
+env:
+  S3_PATH: loop-phone/app/AAPSclient.apk
+  S3_APK_URL: https://object.mk-devices.ovh/loop-phone/app/AAPSclient.apk
 jobs:
   fetch:
     runs-on: ubuntu-latest
@@ -26,7 +29,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
         run: |
           curl -L -o NSClient.apk "${{ steps.get_tag.outputs.url }}"
-          aws s3 cp NSClient.apk s3://${{ secrets.S3_BUCKET }}/aaps/AAPSclient.apk --endpoint-url https://eu2.contabostorage.com --acl public-read
+          aws s3 cp NSClient.apk s3://${{ secrets.S3_BUCKET }}/${{ env.S3_PATH }} --endpoint-url https://eu2.contabostorage.com --acl public-read
       - if: steps.check.outputs.skip == 'false'
         run: |
           T="גירסה זמינה: ${{ steps.get_tag.outputs.tag }}\nעודכן בתאריך: $(date +'%d/%m/%Y')"
@@ -49,7 +52,7 @@ jobs:
           aws s3 cp s3://${{ secrets.S3_BUCKET }}/aaps/version.json /tmp/version.json \
             --endpoint-url https://eu2.contabostorage.com 2>/dev/null || echo '{}' > /tmp/version.json
           jq --arg v "${{ steps.get_tag.outputs.tag }}" \
-             --arg u "https://object.mk-devices.ovh/aaps/AAPSclient.apk" \
+             --arg u "${{ env.S3_APK_URL }}" \
              --arg d "$(date +'%d/%m/%Y')" \
              '.nsclient = {"name": "NSClient / AAPSClient", "version": $v, "url": $u, "updated": $d}' \
              /tmp/version.json > /tmp/version_new.json
