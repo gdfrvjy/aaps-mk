@@ -21,7 +21,7 @@ jobs:
       - name: Check if already up to date
         id: check
         run: |
-          STORED=$(curl -s "https://suceret-32936-default-rtdb.firebaseio.com/xdrip.json" | jq -r '.version // ""')
+          STORED=$(curl -s "https://object.mk-devices.ovh/aaps/version.json" | jq -r '.xdrip.version // ""')
           if [ "$STORED" == "${{ steps.get_tag.outputs.tag }}" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
           else
@@ -49,40 +49,6 @@ jobs:
         run: |
           aws s3 cp xDrip.apk s3://${{ secrets.S3_BUCKET }}/${{ env.S3_PATH }} \
             --endpoint-url https://eu2.contabostorage.com --acl public-read
-
-      - name: Update Firebase XDRIP tag
-        if: steps.check.outputs.skip == 'false'
-        env:
-          VERSION_NAME: ${{ steps.apk_info.outputs.version_name }}
-        run: |
-          python3 << 'PYEOF'
-          import requests, os
-
-          VERSION_NAME = os.environ['VERSION_NAME']
-          URL = "https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA/XDRIP.json"
-
-          stored = requests.get(URL).json() or ""
-          clean = stored
-          if isinstance(clean, str) and clean.startswith('"') and clean.endswith('"') and len(clean) > 1:
-              clean = clean[1:-1]
-
-          lines = clean.split("\\n") if "\\n" in clean else (clean.splitlines() or [""])
-          lines[0] = f"גירסה זמינה: {VERSION_NAME} (מתעדכן אוטומטית כשיש עדכון חדש)"
-          new_value = '"' + "\\n".join(lines) + '"'
-          requests.put(URL, json=new_value)
-          PYEOF
-
-      - name: Update Firebase xdrip config
-        if: steps.check.outputs.skip == 'false'
-        run: |
-          jq -n \
-            --arg v "${{ steps.get_tag.outputs.tag }}" \
-            --arg n "${{ steps.apk_info.outputs.version_name }}" \
-            '{"version": $v, "version_name": $n}' | \
-          curl -X PUT \
-            "https://suceret-32936-default-rtdb.firebaseio.com/xdrip.json" \
-            -H "Content-Type: application/json" \
-            --data-binary @-
 
       - name: Update S3 version.json
         if: steps.check.outputs.skip == 'false'
@@ -115,4 +81,4 @@ jobs:
           curl -s -X POST "https://mk-mailer.3140197.workers.dev" \
             -H "Content-Type: application/json" \
             -H "X-Auth-Key: 0b5f506d3981262d154bcfb5ad902b6557577447beaf0761" \
-            -d "{\"to\":\"8461950@gmail.com\",\"subject\":\"✅ xDrip Updated\",\"body\":\"xDrip עודכן ב-S3 ובפיירבייס לגרסה ${{ steps.apk_info.outputs.version_name }} (${{ steps.get_tag.outputs.tag }}).\"}"
+            -d "{\"to\":\"8461950@gmail.com\",\"subject\":\"✅ xDrip Updated\",\"body\":\"xDrip עודכן ב-S3 ובקטלוג לופ פון לגרסה ${{ steps.apk_info.outputs.version_name }} (${{ steps.get_tag.outputs.tag }}).\"}"
