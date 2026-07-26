@@ -16,40 +16,49 @@ jobs:
         run: |
           D=$(curl -s "https://api.github.com/repos/NightscoutFoundation/xDrip/releases")
           echo "tag=$(echo "$D" | jq -r '.[0].tag_name')" >> $GITHUB_OUTPUT
-          echo "release_name=$(echo "$D" | jq -r '.[0].name')" >> $GITHUB_OUTPUT
           echo "url=$(echo "$D" | jq -r '.[0].assets[] | select(.name | endswith(".apk")) | .browser_download_url' | head -n 1)" >> $GITHUB_OUTPUT
 
       - name: Check if already up to date
         id: check
         run: |
-          C=$(curl -s "https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA/XDRIP.json")
-          if [[ "$C" == *"${{ steps.get_tag.outputs.tag }}"* ]] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+          STORED=$(curl -s "https://suceret-32936-default-rtdb.firebaseio.com/xdrip.json" | jq -r '.version // ""')
+          if [ "$STORED" == "${{ steps.get_tag.outputs.tag }}" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
           else
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Download & upload to S3
+      - name: Download xDrip APK
+        if: steps.check.outputs.skip == 'false'
+        run: curl -L -o xDrip.apk "${{ steps.get_tag.outputs.url }}"
+
+      - name: Read real version name from APK
+        id: apk_info
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
+          VERSION_NAME=$("$BT/aapt" dump badging xDrip.apk | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          [ -z "$VERSION_NAME" ] && VERSION_NAME="${{ steps.get_tag.outputs.tag }}"
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload APK to S3
         if: steps.check.outputs.skip == 'false'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET }}
         run: |
-          curl -L -o xDrip.apk "${{ steps.get_tag.outputs.url }}"
           aws s3 cp xDrip.apk s3://${{ secrets.S3_BUCKET }}/${{ env.S3_PATH }} \
             --endpoint-url https://eu2.contabostorage.com --acl public-read
 
       - name: Update Firebase XDRIP tag
         if: steps.check.outputs.skip == 'false'
         env:
-          TAG: ${{ steps.get_tag.outputs.tag }}
-          RELEASE_NAME: ${{ steps.get_tag.outputs.release_name }}
+          VERSION_NAME: ${{ steps.apk_info.outputs.version_name }}
         run: |
           python3 << 'PYEOF'
           import requests, os
 
-          TAG = os.environ['TAG']
-          RELEASE_NAME = os.environ['RELEASE_NAME']
+          VERSION_NAME = os.environ['VERSION_NAME']
           URL = "https://suceret-32936-default-rtdb.firebaseio.com/%D7%9E%D7%A2%D7%A8%D7%9B%D7%AA%20%D7%A0%D7%99%D7%94%D7%95%D7%9C%20%D7%A1%D7%95%D7%9B%D7%A8%D7%AA/XDRIP.json"
 
           stored = requests.get(URL).json() or ""
@@ -58,23 +67,17 @@ jobs:
               clean = clean[1:-1]
 
           lines = clean.split("\\n") if "\\n" in clean else (clean.splitlines() or [""])
-          display = RELEASE_NAME if RELEASE_NAME else TAG
-          lines[0] = f"גירסה זמינה: {display} (מתעדכן אוטומטית כשיש עדכון חדש)"
+          lines[0] = f"גירסה זמינה: {VERSION_NAME} (מתעדכן אוטומטית כשיש עדכון חדש)"
           new_value = '"' + "\\n".join(lines) + '"'
           requests.put(URL, json=new_value)
           PYEOF
 
       - name: Update Firebase xdrip config
         if: steps.check.outputs.skip == 'false'
-        env:
-          TAG: ${{ steps.get_tag.outputs.tag }}
-          RELEASE_NAME: ${{ steps.get_tag.outputs.release_name }}
         run: |
-          DISPLAY="${{ steps.get_tag.outputs.release_name }}"
-          [ -z "$DISPLAY" ] && DISPLAY="${{ steps.get_tag.outputs.tag }}"
           jq -n \
             --arg v "${{ steps.get_tag.outputs.tag }}" \
-            --arg n "$DISPLAY" \
+            --arg n "${{ steps.apk_info.outputs.version_name }}" \
             '{"version": $v, "version_name": $n}' | \
           curl -X PUT \
             "https://suceret-32936-default-rtdb.firebaseio.com/xdrip.json" \
@@ -89,10 +92,8 @@ jobs:
         run: |
           aws s3 cp s3://${{ secrets.S3_BUCKET }}/aaps/version.json /tmp/version.json \
             --endpoint-url https://eu2.contabostorage.com 2>/dev/null || echo '{}' > /tmp/version.json
-          RELEASE_NAME="${{ steps.get_tag.outputs.release_name }}"
-          [ -z "$RELEASE_NAME" ] && RELEASE_NAME="${{ steps.get_tag.outputs.tag }}"
           jq --arg v "${{ steps.get_tag.outputs.tag }}" \
-             --arg n "$RELEASE_NAME" \
+             --arg n "${{ steps.apk_info.outputs.version_name }}" \
              --arg u "${{ env.S3_APK_URL }}" \
              --arg d "$(date +'%d/%m/%Y')" \
              '.xdrip = {"name": "xDrip+", "version": $v, "version_name": $n, "url": $u, "updated": $d}' \
@@ -104,18 +105,14 @@ jobs:
       - name: Update Loop Phone app catalog version
         if: steps.check.outputs.skip == 'false'
         run: |
-          RELEASE_NAME="${{ steps.get_tag.outputs.release_name }}"
-          [ -z "$RELEASE_NAME" ] && RELEASE_NAME="${{ steps.get_tag.outputs.tag }}"
           curl -s -X POST "https://loop.mk-devices.ovh/fn/setAppVersion" \
             -H "Content-Type: application/json" \
-            -d "{\"secret\":\"mk-deploy-2026\",\"pkg\":\"com.eveningoutpost.dexdrip\",\"version\":\"${{ steps.get_tag.outputs.tag }}\",\"version_name\":\"$RELEASE_NAME\",\"link\":\"${{ env.S3_APK_URL }}\"}"
+            -d "{\"secret\":\"mk-deploy-2026\",\"pkg\":\"com.eveningoutpost.dexdrip\",\"version\":\"${{ steps.get_tag.outputs.tag }}\",\"version_name\":\"${{ steps.apk_info.outputs.version_name }}\",\"link\":\"${{ env.S3_APK_URL }}\"}"
 
       - name: Send email notification
         if: steps.check.outputs.skip == 'false'
         run: |
-          RELEASE_NAME="${{ steps.get_tag.outputs.release_name }}"
-          [ -z "$RELEASE_NAME" ] && RELEASE_NAME="${{ steps.get_tag.outputs.tag }}"
           curl -s -X POST "https://mk-mailer.3140197.workers.dev" \
             -H "Content-Type: application/json" \
             -H "X-Auth-Key: 0b5f506d3981262d154bcfb5ad902b6557577447beaf0761" \
-            -d "{\"to\":\"8461950@gmail.com\",\"subject\":\"✅ xDrip Updated\",\"body\":\"xDrip עודכן ב-S3 ובפיירבייס לגרסה $RELEASE_NAME (${{ steps.get_tag.outputs.tag }}).\"}"
+            -d "{\"to\":\"8461950@gmail.com\",\"subject\":\"✅ xDrip Updated\",\"body\":\"xDrip עודכן ב-S3 ובפיירבייס לגרסה ${{ steps.apk_info.outputs.version_name }} (${{ steps.get_tag.outputs.tag }}).\"}"
