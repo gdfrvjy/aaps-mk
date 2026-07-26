@@ -107,7 +107,7 @@ jobs:
         run: |
           curl -s -X POST "https://loop.mk-devices.ovh/fn/setAppVersion" \
             -H "Content-Type: application/json" \
-            -d "{\"secret\":\"mk-deploy-2026\",\"pkg\":\"com.eveningoutpost.dexdrip\",\"version\":\"${{ steps.get_tag.outputs.tag }}\",\"version_name\":\"${{ steps.apk_info.outputs.version_name }}\",\"link\":\"${{ env.S3_APK_URL }}\"}"
+            -d "{\"secret\":\"mk-deploy-2026\",\"pkg\":\"com.eveningoutpost.dexdrip\",\"version\":\"${{ steps.apk_info.outputs.version_name }}\",\"link\":\"${{ env.S3_APK_URL }}\"}"
 
       - name: Send email notification
         if: steps.check.outputs.skip == 'false'
